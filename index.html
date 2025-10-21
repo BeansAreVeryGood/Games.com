@@ -9,15 +9,17 @@
     html,body{height:100%;margin:0;font-family:system-ui,Arial,sans-serif}
     .topbar{
       position:fixed;top:0;left:0;right:0;height:var(--header-height);
-      background:#0f172a;color:#fff;padding:12px;box-sizing:border-box;
+      background:#ff6600;color:#000;padding:12px;box-sizing:border-box;
       display:flex;flex-direction:column;gap:8px;align-items:center;
-      z-index:2147483647; /* very high so it always sits above iframe */
-      box-shadow:0 4px 12px rgba(0,0,0,0.4)
+      z-index:9999999; /* ensure on top */
+      box-shadow:0 4px 12px rgba(0,0,0,0.4);
+      border-bottom:4px solid #ffff00; /* debug: bright border */
     }
     .url-input{
       width:95%;max-width:1200px;height:44px;padding:8px 12px;
-      border-radius:6px;border:1px solid #334155;font-size:16px;
-      box-sizing:border-box;background:#fff;color:#000;z-index:2147483647
+      border-radius:6px;border:3px solid #00ff00;font-size:16px;
+      box-sizing:border-box;background:#ffffff;color:#000;z-index:9999999;
+      outline: 3px solid #00ffff; /* debug outline */
     }
     .enter-box{
       width:120px;height:34px;display:inline-flex;align-items:center;
