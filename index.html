@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Hapara</title>
+  <title>hapara</title>
   <style>
     :root { --header-height: 96px; }
     html,body{height:100%;margin:0;font-family:system-ui,Arial,sans-serif}
@@ -15,6 +15,7 @@
       box-shadow:0 4px 12px rgba(0,0,0,0.4);
       border-bottom:4px solid #ffff00; /* debug: bright border */
     }
+    .brand{ font-weight:800;color:#06202a;font-size:18px; user-select:none; margin-bottom:4px; }
     .url-input{
       width:95%;max-width:1200px;height:44px;padding:8px 12px;
       border-radius:6px;border:3px solid #00ff00;font-size:16px;
@@ -31,21 +32,51 @@
       width:100%;height:calc(100vh - var(--header-height));border:0;
       box-sizing:border-box;background:#fff;
     }
+
+    /* overlay shown when iframe fails to load */
+    .overlay{
+      position:fixed;left:12px;right:12px;top:calc(var(--header-height) + 12px);
+      max-width:1200px;margin:0 auto;background:rgba(255,255,255,0.98);
+      border-radius:8px;padding:12px;box-shadow:0 6px 20px rgba(0,0,0,0.35);
+      z-index:10000000;display:none;gap:8px;
+    }
+    .overlay.visible{ display:flex; flex-direction:column; }
+    .overlay .row{ display:flex; gap:8px; align-items:center; }
+    .btn-ghost{ padding:8px 12px;border-radius:6px;background:#e2e8f0;cursor:pointer; }
+    .btn-primary{ padding:8px 12px;border-radius:6px;background:#06b6d4;color:#06202a;cursor:pointer; }
+    .muted{ color:#374151;font-size:13px; }
     @media (max-width:480px){ :root{--header-height:120px} .enter-box{width:100px;height:36px} }
   </style>
 </head>
 <body>
   <div class="topbar" role="region" aria-label="URL input area">
+    <div class="brand">hapara</div>
     <input id="urlInput" class="url-input" type="text" placeholder="Enter a URL (e.g. example.com or https://example.com)" />
     <div id="enterBtn" class="enter-box" role="button" tabindex="0">Enter</div>
   </div>
 
   <iframe id="viewer" class="viewer" src="about:blank" sandbox="allow-scripts allow-forms allow-same-origin"></iframe>
 
+  <div id="errorOverlay" class="overlay" role="alert" aria-hidden="true">
+    <div class="row"><strong id="overlayTitle">Unable to display site in the viewer</strong></div>
+    <div class="row muted" id="overlayMsg">The site may block embedding (X-Frame-Options or Content-Security-Policy), be unreachable, or use mixed content.</div>
+    <div class="row">
+      <a id="openNewTab" class="btn-primary" href="#" target="_blank" rel="noopener noreferrer">Open in new tab</a>
+      <button id="copyCurl" class="btn-ghost">Copy curl check</button>
+      <button id="dismiss" class="btn-ghost">Dismiss</button>
+    </div>
+  </div>
+
   <script>
     const input = document.getElementById('urlInput');
     const btn = document.getElementById('enterBtn');
     const viewer = document.getElementById('viewer');
+    const overlay = document.getElementById('errorOverlay');
+    const overlayTitle = document.getElementById('overlayTitle');
+    const overlayMsg = document.getElementById('overlayMsg');
+    const openNewTab = document.getElementById('openNewTab');
+    const copyCurl = document.getElementById('copyCurl');
+    const dismiss = document.getElementById('dismiss');
 
     function hasScheme(s){ return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s); }
 
@@ -57,49 +88,93 @@
       return ['https://' + raw, 'http://' + raw];
     }
 
+    // show overlay with message and target url
+    function showOverlay(msg, url, title='Unable to display site in the viewer'){
+      overlayTitle.textContent = title;
+      overlayMsg.textContent = msg;
+      openNewTab.href = url;
+      overlay.classList.add('visible');
+      overlay.setAttribute('aria-hidden','false');
+    }
+    function hideOverlay(){
+      overlay.classList.remove('visible');
+      overlay.setAttribute('aria-hidden','true');
+    }
+
     function loadUrl(){
+      hideOverlay();
       const raw = input.value;
       const candidates = normalizeCandidates(raw);
       if(candidates.length === 0){ viewer.src = 'about:blank'; return; }
 
       let tried = 0;
       let timer = null;
+      const timeoutPerAttempt = 7000; // longer timeout
 
       function tryNext(){
         if(tried >= candidates.length){
-          console.warn('All candidates failed to load:', candidates);
+          showOverlay('All attempts failed. The site likely blocks framing (X-Frame-Options/CSP), is using mixed content, or is unreachable. Try opening in a new tab or run the curl check.', candidates[candidates.length-1]);
           return;
         }
         const url = candidates[tried++];
         let onloadCalled = false;
+
         const onloadHandler = () => {
           onloadCalled = true;
           clearTimeout(timer);
           viewer.removeEventListener('load', onloadHandler);
+          hideOverlay();
           console.log('Loaded', url);
         };
         viewer.addEventListener('load', onloadHandler);
+        // set iframe src (browser will refuse to render if headers block it)
         viewer.src = url;
 
-        // if load doesn't fire within ~3.5s, try next candidate
+        // if load doesn't fire within timeoutPerAttempt, assume it failed to embed
         timer = setTimeout(() => {
           viewer.removeEventListener('load', onloadHandler);
           if(!onloadCalled) {
             console.warn('Load timeout for', url, '- trying next candidate if any');
             tryNext();
           }
-        }, 3500);
+        }, timeoutPerAttempt);
       }
 
       tryNext();
     }
 
+    // If iframe navigates successfully hide overlay
+    viewer.addEventListener('load', () => {
+      // load event is a success for many pages; hide overlay in case visible
+      hideOverlay();
+    });
+
+    // Buttons
     btn.addEventListener('click', loadUrl);
     btn.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadUrl(); } });
     input.addEventListener('keydown', e => { if(e.key === 'Enter') loadUrl(); });
 
-    // Note: many sites block embedding in an iframe with X-Frame-Options/CSP.
-    // Use the browser console / curl -I to inspect those headers.
+    dismiss.addEventListener('click', hideOverlay);
+
+    copyCurl.addEventListener('click', async () => {
+      const raw = input.value.trim();
+      const url = hasScheme(raw) ? raw : ('https://' + raw);
+      const cmd = `curl -I '${url}' | egrep -i 'x-frame-options|content-security-policy'`;
+      try{
+        await navigator.clipboard.writeText(cmd);
+        copyCurl.textContent = 'Copied';
+        setTimeout(()=> copyCurl.textContent = 'Copy curl check', 2000);
+      }catch(e){
+        copyCurl.textContent = 'Copy failed';
+        setTimeout(()=> copyCurl.textContent = 'Copy curl check', 2000);
+      }
+    });
+
+    // Tips shown in console for debugging from the dev container
+    console.log('If a site refuses to load in the iframe check headers from the container terminal:');
+    console.log("  $ curl -I 'https://example.com' | egrep -i 'x-frame-options|content-security-policy'");
+    console.log('From the dev container you can open a URL in the host browser with:');
+    console.log("  $BROWSER '<url>'");
   </script>
 </body>
 </html>
