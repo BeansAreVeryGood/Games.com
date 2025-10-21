@@ -47,16 +47,51 @@
     const btn = document.getElementById('enterBtn');
     const viewer = document.getElementById('viewer');
 
-    function sanitizeUrl(raw){
-      if(!raw) return '';
-      raw = raw.trim();
-      if(!/^https?:\/\//i.test(raw)) raw = 'https://' + raw;
-      return raw;
+    function hasScheme(s){ return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s); }
+
+    function normalizeCandidates(raw){
+      raw = (raw||'').trim();
+      if(!raw) return [];
+      if(hasScheme(raw)) return [raw];
+      // try https first then http as fallback
+      return ['https://' + raw, 'http://' + raw];
     }
 
     function loadUrl(){
-      const url = sanitizeUrl(input.value);
-      viewer.src = url || 'about:blank';
+      const raw = input.value;
+      const candidates = normalizeCandidates(raw);
+      if(candidates.length === 0){ viewer.src = 'about:blank'; return; }
+
+      let tried = 0;
+      let timer = null;
+
+      function tryNext(){
+        if(tried >= candidates.length){
+          console.warn('All candidates failed to load:', candidates);
+          return;
+        }
+        const url = candidates[tried++];
+        let onloadCalled = false;
+        const onloadHandler = () => {
+          onloadCalled = true;
+          clearTimeout(timer);
+          viewer.removeEventListener('load', onloadHandler);
+          console.log('Loaded', url);
+        };
+        viewer.addEventListener('load', onloadHandler);
+        viewer.src = url;
+
+        // if load doesn't fire within ~3.5s, try next candidate
+        timer = setTimeout(() => {
+          viewer.removeEventListener('load', onloadHandler);
+          if(!onloadCalled) {
+            console.warn('Load timeout for', url, '- trying next candidate if any');
+            tryNext();
+          }
+        }, 3500);
+      }
+
+      tryNext();
     }
 
     btn.addEventListener('click', loadUrl);
@@ -64,6 +99,7 @@
     input.addEventListener('keydown', e => { if(e.key === 'Enter') loadUrl(); });
 
     // Note: many sites block embedding in an iframe with X-Frame-Options/CSP.
+    // Use the browser console / curl -I to inspect those headers.
   </script>
 </body>
 </html>
