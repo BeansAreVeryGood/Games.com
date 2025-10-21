@@ -29,8 +29,9 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
-      z-index: 10;
+      z-index: 99999; /* increased so it sits above iframe */
       align-items: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     }
 
     .url-input {
@@ -44,6 +45,7 @@
       box-sizing: border-box;
       background: #fff;
       color: #000;
+      z-index: 100000; /* ensure input is on top */
     }
 
     .enter-box {

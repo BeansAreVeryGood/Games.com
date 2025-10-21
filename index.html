@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>URL Viewer</title>
+  <style>
+    :root { --header-height: 96px; }
+    html,body{height:100%;margin:0;font-family:system-ui,Arial,sans-serif}
+    .topbar{
+      position:fixed;top:0;left:0;right:0;height:var(--header-height);
+      background:#0f172a;color:#fff;padding:12px;box-sizing:border-box;
+      display:flex;flex-direction:column;gap:8px;align-items:center;
+      z-index:2147483647; /* very high so it always sits above iframe */
+      box-shadow:0 4px 12px rgba(0,0,0,0.4)
+    }
+    .url-input{
+      width:95%;max-width:1200px;height:44px;padding:8px 12px;
+      border-radius:6px;border:1px solid #334155;font-size:16px;
+      box-sizing:border-box;background:#fff;color:#000;z-index:2147483647
+    }
+    .enter-box{
+      width:120px;height:34px;display:inline-flex;align-items:center;
+      justify-content:center;background:#06b6d4;color:#06202a;border-radius:6px;
+      cursor:pointer;font-weight:600;user-select:none;box-shadow:0 2px 6px rgba(2,6,23,0.2)
+    }
+    .viewer{
+      position:fixed;top:var(--header-height);left:0;right:0;bottom:0;
+      width:100%;height:calc(100vh - var(--header-height));border:0;
+      box-sizing:border-box;background:#fff;
+    }
+    @media (max-width:480px){ :root{--header-height:120px} .enter-box{width:100px;height:36px} }
+  </style>
+</head>
+<body>
+  <div class="topbar" role="region" aria-label="URL input area">
+    <input id="urlInput" class="url-input" type="text" placeholder="Enter a URL (e.g. example.com or https://example.com)" />
+    <div id="enterBtn" class="enter-box" role="button" tabindex="0">Enter</div>
+  </div>
+
+  <iframe id="viewer" class="viewer" src="about:blank" sandbox="allow-scripts allow-forms allow-same-origin"></iframe>
+
+  <script>
+    const input = document.getElementById('urlInput');
+    const btn = document.getElementById('enterBtn');
+    const viewer = document.getElementById('viewer');
+
+    function sanitizeUrl(raw){
+      if(!raw) return '';
+      raw = raw.trim();
+      if(!/^https?:\/\//i.test(raw)) raw = 'https://' + raw;
+      return raw;
+    }
+
+    function loadUrl(){
+      const url = sanitizeUrl(input.value);
+      viewer.src = url || 'about:blank';
+    }
+
+    btn.addEventListener('click', loadUrl);
+    btn.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadUrl(); } });
+    input.addEventListener('keydown', e => { if(e.key === 'Enter') loadUrl(); });
+
+    // Note: many sites block embedding in an iframe with X-Frame-Options/CSP.
+  </script>
+</body>
+</html>
