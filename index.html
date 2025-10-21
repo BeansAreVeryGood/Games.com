@@ -51,11 +51,15 @@
 <body>
   <div class="topbar" role="region" aria-label="URL input area">
     <div class="brand">hapara</div>
+    <label style="font-size:13px;margin-bottom:4px;">
+      <input id="useProxy" type="checkbox" /> Use proxy (when available)
+    </label>
     <input id="urlInput" class="url-input" type="text" placeholder="Enter a URL (e.g. example.com or https://example.com)" />
     <div id="enterBtn" class="enter-box" role="button" tabindex="0">Enter</div>
   </div>
 
-  <iframe id="viewer" class="viewer" src="about:blank" sandbox="allow-scripts allow-forms allow-same-origin"></iframe>
+  <!-- allow-popups and allow-top-navigation so login flows opened by the framed page can work -->
+  <iframe id="viewer" class="viewer" src="about:blank" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-top-navigation"></iframe>
 
   <div id="errorOverlay" class="overlay" role="alert" aria-hidden="true">
     <div class="row"><strong id="overlayTitle">Unable to display site in the viewer</strong></div>
@@ -68,6 +72,24 @@
   </div>
 
   <script>
+    // proxy configuration — point at the running proxy server
+    const PROXY_BASE = 'http://localhost:3000';
+    let proxyAvailable = false;
+
+    async function checkProxy() {
+      try {
+        const r = await fetch(PROXY_BASE + '/health', { cache: 'no-store' , mode: 'cors' });
+        proxyAvailable = r.ok;
+      } catch (e) {
+        proxyAvailable = false;
+      }
+      // if the checkbox is checked but proxy is unavailable, show a tip
+      const cb = document.getElementById('useProxy');
+      if (cb && cb.checked && !proxyAvailable) {
+        showOverlay('Proxy is not reachable. Start the proxy (see README) or uncheck "Use proxy".', window.location.href, 'Proxy not reachable');
+      }
+    }
+
     const input = document.getElementById('urlInput');
     const btn = document.getElementById('enterBtn');
     const viewer = document.getElementById('viewer');
@@ -105,7 +127,21 @@
       hideOverlay();
       const raw = input.value;
       const candidates = normalizeCandidates(raw);
+      const useProxyEl = document.getElementById('useProxy');
+      const useProxy = !!(useProxyEl && useProxyEl.checked);
       if(candidates.length === 0){ viewer.src = 'about:blank'; return; }
+
+      // choose first candidate that loads; if useProxy=true, route through /proxy
+      const buildSrc = (u) => {
+        if (!useProxy) return u;
+        if (!proxyAvailable) {
+          // attempt to re-check once
+          checkProxy();
+          showOverlay('Proxy not reachable. Try unchecking "Use proxy" or start the proxy server.', u, 'Proxy not reachable');
+          return u; // fall back to direct (will likely be blocked by X-Frame/CSP)
+        }
+        return PROXY_BASE + '/proxy?url=' + encodeURIComponent(u);
+      };
 
       let tried = 0;
       let timer = null;
@@ -128,7 +164,7 @@
         };
         viewer.addEventListener('load', onloadHandler);
         // set iframe src (browser will refuse to render if headers block it)
-        viewer.src = url;
+        viewer.src = buildSrc(url);
 
         // if load doesn't fire within timeoutPerAttempt, assume it failed to embed
         timer = setTimeout(() => {
@@ -150,7 +186,10 @@
     });
 
     // Buttons
-    btn.addEventListener('click', loadUrl);
+    btn.addEventListener('click', async () => {
+      await checkProxy();
+      loadUrl();
+    });
     btn.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadUrl(); } });
     input.addEventListener('keydown', e => { if(e.key === 'Enter') loadUrl(); });
 
