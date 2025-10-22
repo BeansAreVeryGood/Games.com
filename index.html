@@ -65,28 +65,36 @@
     <div class="row"><strong id="overlayTitle">Unable to display site in the viewer</strong></div>
     <div class="row muted" id="overlayMsg">The site may block embedding (X-Frame-Options or Content-Security-Policy), be unreachable, or use mixed content.</div>
     <div class="row">
-      <a id="openNewTab" class="btn-primary" href="#" target="_blank" rel="noopener noreferrer">Open in new tab</a>
-      <button id="copyCurl" class="btn-ghost">Copy curl check</button>
+      <a id="openDirect" class="btn-primary" href="#" target="_blank" rel="noopener noreferrer">Open directly</a>
+      <a id="openProxied" class="btn-primary" href="#" target="_blank" rel="noopener noreferrer" style="display:none">Open proxied</a>
       <button id="dismiss" class="btn-ghost">Dismiss</button>
     </div>
   </div>
 
   <script>
-    // proxy configuration — point at the running proxy server
-    const PROXY_BASE = 'http://localhost:3000';
-    let proxyAvailable = false;
+    // Prefer a proxy on the same origin; if the page is running locally use local proxy.
+    const LOCAL_PROXY = 'http://localhost:3000';
+    const PROXY_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+      ? LOCAL_PROXY
+      : location.origin; // expects /proxy to exist on same origin when deployed
 
-    async function checkProxy() {
+    // small timeout helper
+    function timeout(ms, p) {
+      return new Promise((res, rej) => {
+        const id = setTimeout(() => { clearTimeout(id); rej(new Error('timeout')); }, ms);
+        p.then(v => (clearTimeout(id), res(v))).catch(e => (clearTimeout(id), rej(e)));
+      });
+    }
+
+    // check if proxy is reachable
+    async function checkProxyReachable() {
       try {
-        const r = await fetch(PROXY_BASE + '/health', { cache: 'no-store' , mode: 'cors' });
-        proxyAvailable = r.ok;
+        // try /health on PROXY_BASE (if PROXY_BASE is same origin this will be relative)
+        const healthUrl = (PROXY_BASE === location.origin) ? '/proxy/health' : (PROXY_BASE + '/health');
+        const r = await timeout(2500, fetch(healthUrl, { method: 'GET', cache: 'no-store', mode: 'cors' }));
+        return r.ok;
       } catch (e) {
-        proxyAvailable = false;
-      }
-      // if the checkbox is checked but proxy is unavailable, show a tip
-      const cb = document.getElementById('useProxy');
-      if (cb && cb.checked && !proxyAvailable) {
-        showOverlay('Proxy is not reachable. Start the proxy (see README) or uncheck "Use proxy".', window.location.href, 'Proxy not reachable');
+        return false;
       }
     }
 
@@ -96,124 +104,94 @@
     const overlay = document.getElementById('errorOverlay');
     const overlayTitle = document.getElementById('overlayTitle');
     const overlayMsg = document.getElementById('overlayMsg');
-    const openNewTab = document.getElementById('openNewTab');
-    const copyCurl = document.getElementById('copyCurl');
+    const openDirect = document.getElementById('openDirect');
+    const openProxied = document.getElementById('openProxied');
     const dismiss = document.getElementById('dismiss');
 
     function hasScheme(s){ return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s); }
-
     function normalizeCandidates(raw){
       raw = (raw||'').trim();
       if(!raw) return [];
       if(hasScheme(raw)) return [raw];
-      // try https first then http as fallback
       return ['https://' + raw, 'http://' + raw];
     }
-
-    // show overlay with message and target url
-    function showOverlay(msg, url, title='Unable to display site in the viewer'){
-      overlayTitle.textContent = title;
+    function showOverlay(msg, directUrl, proxiedUrl) {
+      overlayTitle.textContent = 'Unable to display site in the viewer';
       overlayMsg.textContent = msg;
-      openNewTab.href = url;
+      openDirect.href = directUrl;
+      if (proxiedUrl) {
+        openProxied.href = proxiedUrl;
+        openProxied.style.display = 'inline-block';
+      } else {
+        openProxied.style.display = 'none';
+      }
       overlay.classList.add('visible');
       overlay.setAttribute('aria-hidden','false');
     }
-    function hideOverlay(){
-      overlay.classList.remove('visible');
-      overlay.setAttribute('aria-hidden','true');
-    }
+    function hideOverlay(){ overlay.classList.remove('visible'); overlay.setAttribute('aria-hidden','true'); }
 
-    function loadUrl(){
+    async function loadUrl(){
       hideOverlay();
       const raw = input.value;
       const candidates = normalizeCandidates(raw);
-      const useProxyEl = document.getElementById('useProxy');
-      const useProxy = !!(useProxyEl && useProxyEl.checked);
       if(candidates.length === 0){ viewer.src = 'about:blank'; return; }
 
-      // choose first candidate that loads; if useProxy=true, route through /proxy
-      const buildSrc = (u) => {
-        if (!useProxy) return u;
-        if (!proxyAvailable) {
-          // attempt to re-check once
-          checkProxy();
-          showOverlay('Proxy not reachable. Try unchecking "Use proxy" or start the proxy server.', u, 'Proxy not reachable');
-          return u; // fall back to direct (will likely be blocked by X-Frame/CSP)
-        }
-        return PROXY_BASE + '/proxy?url=' + encodeURIComponent(u);
+      const proxyReachable = await checkProxyReachable();
+
+      const buildSrc = (u, useProxy) => {
+        if(!useProxy) return u;
+        // use same-origin proxy if PROXY_BASE == location.origin, otherwise use explicit PROXY_BASE
+        const base = (PROXY_BASE === location.origin) ? '/proxy' : (PROXY_BASE + '/proxy');
+        return base + '?url=' + encodeURIComponent(u);
       };
 
       let tried = 0;
-      let timer = null;
-      const timeoutPerAttempt = 7000; // longer timeout
+      const timeoutPerAttempt = 6000;
 
-      function tryNext(){
-        if(tried >= candidates.length){
-          showOverlay('All attempts failed. The site likely blocks framing (X-Frame-Options/CSP), is using mixed content, or is unreachable. Try opening in a new tab or run the curl check.', candidates[candidates.length-1]);
+      async function tryNext() {
+        if (tried >= candidates.length) {
+          const last = candidates[candidates.length-1];
+          const proxiedUrl = proxyReachable ? ( (PROXY_BASE === location.origin ? '/proxy' : (PROXY_BASE + '/proxy')) + '?url=' + encodeURIComponent(last) ) : null;
+          showOverlay('All attempts failed. The site likely blocks framing or is unreachable. Use the buttons to open directly or via the proxy (if available).', last, proxiedUrl);
           return;
         }
         const url = candidates[tried++];
-        let onloadCalled = false;
+        let loaded = false;
+        const onload = () => { loaded = true; viewer.removeEventListener('load', onload); hideOverlay(); };
+        viewer.addEventListener('load', onload);
 
-        const onloadHandler = () => {
-          onloadCalled = true;
-          clearTimeout(timer);
-          viewer.removeEventListener('load', onloadHandler);
-          hideOverlay();
-          console.log('Loaded', url);
-        };
-        viewer.addEventListener('load', onloadHandler);
-        // set iframe src (browser will refuse to render if headers block it)
-        viewer.src = buildSrc(url);
+        // try direct first (better for sites that require top-level cookies)
+        viewer.src = buildSrc(url, false);
 
-        // if load doesn't fire within timeoutPerAttempt, assume it failed to embed
-        timer = setTimeout(() => {
-          viewer.removeEventListener('load', onloadHandler);
-          if(!onloadCalled) {
-            console.warn('Load timeout for', url, '- trying next candidate if any');
-            tryNext();
-          }
-        }, timeoutPerAttempt);
+        await new Promise(resolve => setTimeout(resolve, timeoutPerAttempt));
+        if (loaded) return;
+        viewer.removeEventListener('load', onload);
+
+        // if direct failed and proxy is reachable, try proxy
+        if (proxyReachable) {
+          viewer.addEventListener('load', onload);
+          viewer.src = buildSrc(url, true);
+          await new Promise(resolve => setTimeout(resolve, timeoutPerAttempt));
+          if (loaded) return;
+          viewer.removeEventListener('load', onload);
+        }
+
+        // next candidate
+        tryNext();
       }
 
       tryNext();
     }
 
-    // If iframe navigates successfully hide overlay
-    viewer.addEventListener('load', () => {
-      // load event is a success for many pages; hide overlay in case visible
-      hideOverlay();
-    });
-
-    // Buttons
-    btn.addEventListener('click', async () => {
-      await checkProxy();
-      loadUrl();
-    });
+    // wire UI
+    btn.addEventListener('click', loadUrl);
     btn.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadUrl(); } });
     input.addEventListener('keydown', e => { if(e.key === 'Enter') loadUrl(); });
-
     dismiss.addEventListener('click', hideOverlay);
 
-    copyCurl.addEventListener('click', async () => {
-      const raw = input.value.trim();
-      const url = hasScheme(raw) ? raw : ('https://' + raw);
-      const cmd = `curl -I '${url}' | egrep -i 'x-frame-options|content-security-policy'`;
-      try{
-        await navigator.clipboard.writeText(cmd);
-        copyCurl.textContent = 'Copied';
-        setTimeout(()=> copyCurl.textContent = 'Copy curl check', 2000);
-      }catch(e){
-        copyCurl.textContent = 'Copy failed';
-        setTimeout(()=> copyCurl.textContent = 'Copy curl check', 2000);
-      }
-    });
-
-    // Tips shown in console for debugging from the dev container
-    console.log('If a site refuses to load in the iframe check headers from the container terminal:');
-    console.log("  $ curl -I 'https://example.com' | egrep -i 'x-frame-options|content-security-policy'");
-    console.log('From the dev container you can open a URL in the host browser with:');
-    console.log("  $BROWSER '<url>'");
+    // helpful console message
+    console.log('PROXY_BASE =', PROXY_BASE);
+    console.log('If remote machines cannot reach your proxy, host the proxy on a network-accessible host (same origin as the site or public host).');
   </script>
 </body>
 </html>
