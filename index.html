@@ -56,10 +56,7 @@
     </label>
     <input id="urlInput" class="url-input" type="text" placeholder="Enter a URL (e.g. example.com or https://example.com)" />
     <div id="enterBtn" class="enter-box" role="button" tabindex="0">Enter</div>
-    <div style="margin-top:6px;display:flex;gap:8px;">
-      <a id="openGoogleDirect" class="btn-primary" href="https://www.google.com" target="_blank" rel="noopener">Open Google</a>
-      <a id="openGoogleProxied" class="btn-primary" href="#" target="_blank" rel="noopener" style="display:none">Open Google (proxied)</a>
-    </div>
+    <!-- Google buttons removed per request -->
   </div>
 
   <!-- allow-popups and allow-top-navigation so login flows opened by the framed page can work -->
@@ -164,6 +161,15 @@
         const onload = () => { loaded = true; viewer.removeEventListener('load', onload); hideOverlay(); };
         viewer.addEventListener('load', onload);
 
+        // determine whether to use proxy for this URL
+        const useProxyEl = document.getElementById('useProxy');
+        let useProxyForThis = !!(useProxyEl && useProxyEl.checked);
+        try {
+          const host = new URL(url).hostname;
+          // auto-enable proxy for Google domains when proxy is reachable
+          if (/(\.|^)google\./i.test(host) && proxyReachable) useProxyForThis = true;
+        } catch (e) { /* ignore parse errors, fall back to checkbox */ }
+
         // try direct first (better for sites that require top-level cookies)
         viewer.src = buildSrc(url, false);
 
@@ -174,7 +180,8 @@
         // if direct failed and proxy is reachable, try proxy
         if (proxyReachable) {
           viewer.addEventListener('load', onload);
-          viewer.src = buildSrc(url, true);
+          // prefer proxy for Google or when user checked proxy
+          viewer.src = buildSrc(url, useProxyForThis);
           await new Promise(resolve => setTimeout(resolve, timeoutPerAttempt));
           if (loaded) return;
           viewer.removeEventListener('load', onload);
@@ -193,16 +200,7 @@
     input.addEventListener('keydown', e => { if(e.key === 'Enter') loadUrl(); });
     dismiss.addEventListener('click', hideOverlay);
 
-    // show proxied Google link if proxy is reachable
-    (async function(){
-      try {
-        const r = await fetch((location.hostname==='localhost' ? (location.protocol+'//localhost:3000') : location.origin) + '/health', { method:'GET', mode:'cors' });
-        if (r.ok) {
-          document.getElementById('openGoogleProxied').style.display = 'inline-block';
-          document.getElementById('openGoogleProxied').href = (location.hostname==='localhost' ? (location.protocol+'//localhost:3000') : location.origin) + '/proxy?url=' + encodeURIComponent('https://www.google.com');
-        }
-      } catch(e){}
-    })();
+    // removed explicit Google buttons; proxy will be auto used for google domains when reachable
 
     // helpful console message
     console.log('PROXY_BASE =', PROXY_BASE);

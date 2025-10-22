@@ -9,8 +9,8 @@ function isHtmlContent(ct) { return ct && ct.toLowerCase().includes('text/html')
 function removeBlockingHeaders(headers, out) {
   Object.keys(headers).forEach(name => {
     const lname = name.toLowerCase();
-    if (lname === 'x-frame-options' || lname === 'content-security-policy') return;
-    if (lname === 'set-cookie') return;
+    // strip framing / CSP that prevents embedding; don't forward set-cookie here (handled separately)
+    if (lname === 'x-frame-options' || lname === 'content-security-policy' || lname === 'set-cookie') return;
     const value = Array.isArray(headers[name]) ? headers[name][0] : headers[name];
     if (value) out.setHeader(name, value);
   });
@@ -28,6 +28,7 @@ app.get('/proxy', async (req, res) => {
 
     const proxyBase = `${req.protocol}://${req.get('host')}`;
 
+    // rewrite redirect locations to go through proxy
     const upstreamLocation = resp.headers.get('location');
     if (upstreamLocation && resp.status >= 300 && resp.status < 400) {
       const abs = new URL(upstreamLocation, target).toString();
@@ -39,6 +40,7 @@ app.get('/proxy', async (req, res) => {
     const rawHeaders = resp.headers.raw ? resp.headers.raw() : {};
     removeBlockingHeaders(rawHeaders, res);
 
+    // rewrite Set-Cookie for local dev so browser will accept cookies for proxy origin
     const upstreamCookies = rawHeaders['set-cookie'] || [];
     if (upstreamCookies.length) {
       const rewritten = upstreamCookies.map(c => {
@@ -55,6 +57,7 @@ app.get('/proxy', async (req, res) => {
     if (isHtmlContent(contentType)) {
       let text = await resp.text();
 
+      // rewrite href/src/action attributes to route via proxy (basic, best-effort)
       text = text.replace(/(href|src|action)=("|\')([^"\']+)("|\')/gi, (m, attr, q, url, q2) => {
         if (/^(data:|mailto:|javascript:|#)/i.test(url)) return m;
         if (url.startsWith(proxyBase + '/proxy?url=')) return m;
@@ -65,6 +68,7 @@ app.get('/proxy', async (req, res) => {
         } catch (e) { return m; }
       });
 
+      // rewrite absolute URLs found elsewhere (best-effort)
       text = text.replace(/https?:\/\/[A-Za-z0-9\-\._~:\/\?#\[\]@!$&'()*+,;=%]+/gi, (m) => {
         if (m.startsWith(proxyBase + '/proxy?url=')) return m;
         return proxyBase + '/proxy?url=' + encodeURIComponent(m);
