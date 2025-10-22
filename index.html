@@ -56,6 +56,10 @@
     </label>
     <input id="urlInput" class="url-input" type="text" placeholder="Enter a URL (e.g. example.com or https://example.com)" />
     <div id="enterBtn" class="enter-box" role="button" tabindex="0">Enter</div>
+    <div style="margin-top:6px;display:flex;gap:8px;">
+      <a id="openGoogleDirect" class="btn-primary" href="https://www.google.com" target="_blank" rel="noopener">Open Google</a>
+      <a id="openGoogleProxied" class="btn-primary" href="#" target="_blank" rel="noopener" style="display:none">Open Google (proxied)</a>
+    </div>
   </div>
 
   <!-- allow-popups and allow-top-navigation so login flows opened by the framed page can work -->
@@ -188,6 +192,17 @@
     btn.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadUrl(); } });
     input.addEventListener('keydown', e => { if(e.key === 'Enter') loadUrl(); });
     dismiss.addEventListener('click', hideOverlay);
+
+    // show proxied Google link if proxy is reachable
+    (async function(){
+      try {
+        const r = await fetch((location.hostname==='localhost' ? (location.protocol+'//localhost:3000') : location.origin) + '/health', { method:'GET', mode:'cors' });
+        if (r.ok) {
+          document.getElementById('openGoogleProxied').style.display = 'inline-block';
+          document.getElementById('openGoogleProxied').href = (location.hostname==='localhost' ? (location.protocol+'//localhost:3000') : location.origin) + '/proxy?url=' + encodeURIComponent('https://www.google.com');
+        }
+      } catch(e){}
+    })();
 
     // helpful console message
     console.log('PROXY_BASE =', PROXY_BASE);
