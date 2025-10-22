@@ -72,11 +72,11 @@
   </div>
 
   <script>
-    // Prefer a proxy on the same origin; if the page is running locally use local proxy.
-    const LOCAL_PROXY = 'http://localhost:3000';
+    // prefer local proxy on dev machine; otherwise use same origin and match protocol to avoid mixed content
+    const LOCAL_PROXY = (location.protocol === 'https:') ? 'https://localhost:3000' : 'http://localhost:3000';
     const PROXY_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
       ? LOCAL_PROXY
-      : location.origin; // expects /proxy to exist on same origin when deployed
+      : (location.protocol + '//' + location.host); // expects /proxy on same origin in production
 
     // small timeout helper
     function timeout(ms, p) {
