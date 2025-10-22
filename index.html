@@ -7,6 +7,18 @@
   <style>
     :root { --header-height: 96px; }
     html,body{height:100%;margin:0;font-family:system-ui,Arial,sans-serif}
+    /* cookie consent popup */
+    .consent {
+      position:fixed;left:12px;right:12px;bottom:12px;max-width:1200px;margin:0 auto;
+      background:#06202a;color:#fff;padding:12px;border-radius:8px;z-index:10000001;
+      display:flex;align-items:center;justify-content:space-between;gap:12px;
+      box-shadow:0 6px 18px rgba(0,0,0,0.35);
+    }
+    .consent .msg{flex:1;font-size:14px}
+    .consent .actions{display:flex;gap:8px}
+    .consent .btn{padding:8px 12px;border-radius:6px;cursor:pointer;border:0}
+    .consent .btn-accept{background:#06b6d4;color:#06202a}
+    .consent .btn-decline{background:#e2e8f0;color:#06202a}
     .topbar{
       position:fixed;top:0;left:0;right:0;height:var(--header-height);
       background:#ff6600;color:#000;padding:12px;box-sizing:border-box;
@@ -59,6 +71,15 @@
     <!-- Google buttons removed per request -->
   </div>
 
+  <!-- cookie consent popup (auto-hidden if user already consented) -->
+  <div id="cookieConsent" class="consent" style="display:none" role="dialog" aria-live="polite">
+    <div class="msg">This site can use a proxy and related cookies to display some sites inside the viewer. Allow use of my cookies for this purpose?</div>
+    <div class="actions">
+      <button id="consentYes" class="btn btn-accept">Yes, allow cookies</button>
+      <button id="consentNo" class="btn btn-decline">No, thanks</button>
+    </div>
+  </div>
+  
   <!-- allow-popups and allow-top-navigation so login flows opened by the framed page can work -->
   <iframe id="viewer" class="viewer" src="about:blank" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-top-navigation"></iframe>
 
@@ -75,9 +96,41 @@
   <script>
     // prefer local proxy on dev machine; otherwise use same origin and match protocol to avoid mixed content
     const LOCAL_PROXY = (location.protocol === 'https:') ? 'https://localhost:3000' : 'http://localhost:3000';
-    const PROXY_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-      ? LOCAL_PROXY
-      : (location.protocol + '//' + location.host); // expects /proxy on same origin in production
+    // treat localhost and common private LAN addresses as "local" so PROXY_BASE points to :3000
+    const isPrivateHost = (h => {
+      if (!h) return false;
+      if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
+      // simple private IPv4 ranges (10.*, 172.16-31.*, 192.168.*)
+      if (/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(h)) return true;
+      return false;
+    })(location.hostname);
+
+    const PROXY_BASE = isPrivateHost ? LOCAL_PROXY : (location.protocol + '//' + location.host); // expects /proxy on same origin in production
+
+    // cookie consent helpers
+    const consentEl = document.getElementById('cookieConsent');
+    const consentYes = document.getElementById('consentYes');
+    const consentNo = document.getElementById('consentNo');
+    function hasConsented(){ return localStorage.getItem('hapara_cookie_consent') === '1'; }
+    function setConsent(v){
+      localStorage.setItem('hapara_cookie_consent', v ? '1' : '0');
+      // if consenting, enable proxy checkbox so proxied cookies will be used
+      const cb = document.getElementById('useProxy');
+      if(cb && v) cb.checked = true;
+    }
+    // show consent UI if not set
+    if(!hasConsented()){
+      consentEl.style.display = 'flex';
+    }
+    consentYes && consentYes.addEventListener('click', () => {
+      setConsent(true);
+      // hide consent UI
+      consentEl.style.display = 'none';
+    });
+    consentNo && consentNo.addEventListener('click', () => {
+      setConsent(false);
+      consentEl.style.display = 'none';
+    });
 
     // small timeout helper
     function timeout(ms, p) {
@@ -139,6 +192,9 @@
 
       const proxyReachable = await checkProxyReachable();
 
+      // if user consented, prefer proxy usage for domains that need cookies (e.g. google)
+      const userConsented = hasConsented();
+
       const buildSrc = (u, useProxy) => {
         if(!useProxy) return u;
         // use same-origin proxy if PROXY_BASE == location.origin, otherwise use explicit PROXY_BASE
@@ -166,8 +222,10 @@
         let useProxyForThis = !!(useProxyEl && useProxyEl.checked);
         try {
           const host = new URL(url).hostname;
-          // auto-enable proxy for Google domains when proxy is reachable
-          if (/(\.|^)google\./i.test(host) && proxyReachable) useProxyForThis = true;
+          // auto-enable proxy for Google domains when proxy is reachable or user consented
+          if (/(\.|^)google\./i.test(host) && proxyReachable && userConsented) useProxyForThis = true;
+          // also auto-enable if user actively checked the box
+          if (/(\.|^)google\./i.test(host) && proxyReachable && useProxyEl && useProxyEl.checked) useProxyForThis = true;
         } catch (e) { /* ignore parse errors, fall back to checkbox */ }
 
         // try direct first (better for sites that require top-level cookies)
@@ -180,7 +238,7 @@
         // if direct failed and proxy is reachable, try proxy
         if (proxyReachable) {
           viewer.addEventListener('load', onload);
-          // prefer proxy for Google or when user checked proxy
+          // prefer proxy for Google or when user checked proxy / consented
           viewer.src = buildSrc(url, useProxyForThis);
           await new Promise(resolve => setTimeout(resolve, timeoutPerAttempt));
           if (loaded) return;
